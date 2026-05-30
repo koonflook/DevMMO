@@ -26,6 +26,8 @@ public class ConfigLoader {
     private FileConfiguration regionLevelConfig;
     private FileConfiguration bossDamageListConfig;
     private FileConfiguration auraSkillIntegrationConfig;
+    private FileConfiguration mobStatScalerConfig;
+    private FileConfiguration bossSpawnerConfig;
 
     public ConfigLoader(DevMMO plugin) {
         this.plugin = plugin;
@@ -48,6 +50,8 @@ public class ConfigLoader {
         regionLevelConfig = loadConfig("Modules/RegionLevelModule.yml");
         bossDamageListConfig = loadConfig("Modules/BossDamageList.yml");
         auraSkillIntegrationConfig = loadConfig("Modules/AuraSkillIntegration.yml");
+        mobStatScalerConfig = loadConfig("Modules/MobStatScaler.yml");
+        bossSpawnerConfig = loadConfig("Modules/BossSpawner.yml");
     }
 
     /**
@@ -183,5 +187,21 @@ public class ConfigLoader {
      */
     public Configuration getAuraSkillIntegrationConfig() {
         return auraSkillIntegrationConfig;
+    }
+
+    /**
+     * Gets the FileConfiguration for MobStatScaler.
+     * @return The MobStatScaler configuration.
+     */
+    public Configuration getMobStatScalerConfig() {
+        return mobStatScalerConfig;
+    }
+
+    /**
+     * Gets the FileConfiguration for BossSpawner.
+     * @return The BossSpawner configuration.
+     */
+    public Configuration getBossSpawnerConfig() {
+        return bossSpawnerConfig;
     }
 }

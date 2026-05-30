@@ -1,0 +1,15 @@
+MobStatScaler:
+  DebugMode: false
+
+  Global:
+    #Available Placeholders:
+    # L - Level
+    # V - Value
+    # {level} / {value} are also supported
+    Health: ceil(V + 10 * (2.71828^(0.015 * L) * (0.06*V)*L))
+    Damage: ceil( (V + (V/10) * L * 20) * 0.72 )
+
+  Specific:
+    ExampleMythicMob:
+      Health: V * L
+      Damage: V * L

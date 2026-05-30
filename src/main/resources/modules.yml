@@ -21,3 +21,9 @@ BossDamageList:
 
 AuraSkillIntegration:
   Enabled: false
+
+MobStatScaler:
+  Enabled: false
+
+BossSpawner:
+  Enabled: false

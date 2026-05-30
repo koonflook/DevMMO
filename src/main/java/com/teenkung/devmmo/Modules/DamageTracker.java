@@ -1,10 +1,12 @@
 package com.teenkung.devmmo.Modules;
 
 import com.teenkung.devmmo.DevMMO;
+import com.teenkung.devmmo.Developcraft.Utils.MythicReflectionTest;
 import com.teenkung.devmmo.Utils.PlayerDamage;
 import io.lumine.mythic.bukkit.MythicBukkit;
 import io.lumine.mythic.bukkit.events.MythicMobDeathEvent;
 import io.lumine.mythic.bukkit.events.MythicMobDespawnEvent;
+import org.bukkit.entity.Arrow;
 import org.bukkit.entity.LivingEntity;
 import org.bukkit.entity.Player;
 import org.bukkit.event.EventHandler;
@@ -53,6 +55,20 @@ public class DamageTracker implements Listener {
                     damage = entity.getHealth();
                 }
                 // Accumulate damage
+                double oldDmg = damageRecord.getDamage(player.getUniqueId());
+                damageRecord.setDamage(player.getUniqueId(), oldDmg + damage);
+                damages.put(event.getEntity().getUniqueId(), damageRecord);
+            }
+        }
+        if (event.getDamager() instanceof Arrow arrow) {
+            if (!(arrow.getShooter() instanceof Player player)) return;
+            if (MythicBukkit.inst().getMobManager().isMythicMob(event.getEntity())) {
+                PlayerDamage damageRecord = damages.getOrDefault(event.getEntity().getUniqueId(), new PlayerDamage());
+                double damage = event.getFinalDamage();
+                LivingEntity entity = (LivingEntity) event.getEntity();
+                if (damage > entity.getHealth()) {
+                    damage = entity.getHealth();
+                }
                 double oldDmg = damageRecord.getDamage(player.getUniqueId());
                 damageRecord.setDamage(player.getUniqueId(), oldDmg + damage);
                 damages.put(event.getEntity().getUniqueId(), damageRecord);

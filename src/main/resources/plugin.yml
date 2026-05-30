@@ -18,8 +18,18 @@ commands:
   devmmo:
     permission: op
     permission-message: "don't"
+  bossreminder:
+    description: Toggle boss spawn reminder notifications for yourself
+    permission: ''
+    permission-message: ''
 
 permissions:
   elytra.bypass:
     description: Allows using fireworks to boost elytra speed
     default: false
+  devmmo.reload:
+    description: Allows reloading the DevMMO plugin
+    default: op
+  devmmo.bossspawner:
+    description: Allows force-spawning bosses via BossSpawner
+    default: op

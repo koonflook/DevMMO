@@ -1,147 +1,268 @@
 package com.teenkung.devmmo.Modules;
 
+import com.Teenkung.devDamageHandler.API.DamageData;
+import com.Teenkung.devDamageHandler.API.Events.PlayerDamageCalculatedEvent;
 import com.teenkung.devmmo.DevMMO;
 import com.teenkung.devmmo.Utils.ColorTranslator;
-import io.lumine.mythic.bukkit.events.*;
-import io.lumine.mythic.lib.api.event.PlayerAttackEvent;
+import io.lumine.mythic.bukkit.MythicBukkit;
+import io.lumine.mythic.bukkit.events.MythicMobDeathEvent;
+import io.lumine.mythic.bukkit.events.MythicMobDespawnEvent;
+import io.lumine.mythic.bukkit.events.MythicMobSpawnEvent;
+import io.lumine.mythic.core.mobs.ActiveMob;
 import net.kyori.adventure.text.Component;
 import net.kyori.adventure.text.minimessage.MiniMessage;
 import net.kyori.adventure.text.minimessage.tag.resolver.Placeholder;
+import org.bukkit.Bukkit;
 import org.bukkit.configuration.Configuration;
 import org.bukkit.configuration.ConfigurationSection;
 import org.bukkit.entity.Entity;
 import org.bukkit.entity.Player;
 import org.bukkit.event.EventHandler;
-import org.bukkit.event.EventPriority;
 import org.bukkit.event.Listener;
-import org.jetbrains.annotations.NotNull;
 
 import java.util.*;
+import java.util.concurrent.ConcurrentHashMap;
 
 public class BossDamageList implements Listener {
 
     private final DevMMO plugin;
-    private final ArrayList<String> bossIds = new ArrayList<>();
-    private final HashMap<UUID, HashMap<Player, Double>> damageMap = new HashMap<>();
-    private final HashMap<String, HashMap<Integer, ArrayList<String>>> rewards = new HashMap<>();
-    private final HashMap<String, List<String>> defaultRewards = new HashMap<>();
-    private final HashMap<String, Double> damageThreshold = new HashMap<>();
+    private final Set<String> bossIds = new HashSet<>();
+
+    // bossEntityUUID -> (playerUUID -> damage)
+    private final Map<UUID, Map<UUID, Double>> damageMap = new ConcurrentHashMap<>();
+
+    // Entity UUIDs force-tracked by BossSpawner (bypasses bossIds check)
+    private final Set<UUID> forceTrackedBosses = ConcurrentHashMap.newKeySet();
+
+    // bossId -> (place -> commands)
+    private final Map<String, Map<Integer, List<String>>> rewards = new HashMap<>();
+
+    // bossId -> commands
+    private final Map<String, List<String>> defaultRewards = new HashMap<>();
+
+    // bossId -> minimum damage
+    private final Map<String, Double> damageThreshold = new HashMap<>();
+
     private String killMessage;
     private String leaderBoardMessage;
 
-    @SuppressWarnings("DataFlowIssue")
+    private int cleanupTaskId = -1;
+
     public BossDamageList(DevMMO plugin) {
         this.plugin = plugin;
 
-        if (plugin.getConfigLoader().isModuleEnabled("BossDamageList")) {
-            plugin.getLogger().info("[BossDamageList] Enabling module. . .");
-            plugin.getServer().getPluginManager().registerEvents(this, plugin);
+        if (!plugin.getConfigLoader().isModuleEnabled("BossDamageList")) return;
 
-            killMessage = plugin.getConfigLoader().getBossDamageListConfig().getString("BossDamageList.KillMessage");
-            leaderBoardMessage = plugin.getConfigLoader().getBossDamageListConfig().getString("BossDamageList.Leaderboard");
-            Configuration config = plugin.getConfigLoader().getBossDamageListConfig();
-            for (String bossId : plugin.getConfigLoader().getBossDamageListConfig().getConfigurationSection("BossDamageList.Bosses").getKeys(false)) {
-                ConfigurationSection bossConfig = config.getConfigurationSection("BossDamageList.Bosses."+bossId);
-                bossIds.add(bossId);
-                HashMap<Integer, ArrayList<String>> rewardMap = new HashMap<>();
-                for (String place : plugin.getConfigLoader().getBossDamageListConfig().getConfigurationSection("BossDamageList.Bosses."+bossId+".Rewards").getKeys(false)) {
-                    ArrayList<String> rewards = new ArrayList<>(plugin.getConfigLoader().getBossDamageListConfig().getStringList("BossDamageList.Bosses."+bossId+".Rewards."+place));
-                    rewardMap.put(Integer.parseInt(place), rewards);
-                }
-                rewards.put(bossId, rewardMap);
-                defaultRewards.put(bossId, bossConfig.getStringList("DefaultRewards"));
-                damageThreshold.put(bossId, bossConfig.getDouble("MinimumDamageThreshold"));
-            }
-            plugin.getLogger().info("[BossDamageList] Enabled module.");
+        plugin.getLogger().info("[BossDamageList] Enabling module. . .");
+        plugin.getServer().getPluginManager().registerEvents(this, plugin);
+
+        loadConfigSafe();
+
+        // Cleanup stale entries periodically (fixes “boss vanished without despawn/death” cases)
+        startCleanupTask();
+
+        plugin.getLogger().info("[BossDamageList] Enabled module.");
+    }
+
+    private void loadConfigSafe() {
+        Configuration config = plugin.getConfigLoader().getBossDamageListConfig();
+
+        this.killMessage = config.getString("BossDamageList.KillMessage", "<gray><name> was defeated!");
+        this.leaderBoardMessage = config.getString(
+                "BossDamageList.Leaderboard",
+                "<gray>#<place> <yellow><name><gray>: <red><damage>"
+        );
+
+        ConfigurationSection bossesSec = config.getConfigurationSection("BossDamageList.Bosses");
+        if (bossesSec == null) {
+            plugin.getLogger().warning("[BossDamageList] Missing config section: BossDamageList.Bosses");
+            return;
         }
+
+        for (String bossId : bossesSec.getKeys(false)) {
+            ConfigurationSection bossCfg = bossesSec.getConfigurationSection(bossId);
+            if (bossCfg == null) continue;
+
+            bossIds.add(bossId);
+
+            // Rewards
+            Map<Integer, List<String>> rewardMap = new HashMap<>();
+            ConfigurationSection rewardsSec = bossCfg.getConfigurationSection("Rewards");
+            if (rewardsSec != null) {
+                for (String placeKey : rewardsSec.getKeys(false)) {
+                    try {
+                        int place = Integer.parseInt(placeKey);
+                        List<String> cmds = rewardsSec.getStringList(placeKey);
+                        rewardMap.put(place, cmds != null ? cmds : List.of());
+                    } catch (NumberFormatException ignored) {
+                        plugin.getLogger().warning("[BossDamageList] Invalid place '" + placeKey + "' in boss " + bossId);
+                    }
+                }
+            }
+            rewards.put(bossId, rewardMap);
+
+            // Default rewards + threshold
+            List<String> def = bossCfg.getStringList("DefaultRewards");
+            defaultRewards.put(bossId, def != null ? def : List.of());
+
+            damageThreshold.put(bossId, bossCfg.getDouble("MinimumDamageThreshold", 0.0));
+        }
+    }
+
+    private void startCleanupTask() {
+        // every 60s (20 ticks * 60)
+        cleanupTaskId = Bukkit.getScheduler().runTaskTimer(plugin, () -> {
+            // Remove entries whose entity no longer exists / no longer mythic mob
+            Iterator<UUID> it = damageMap.keySet().iterator();
+            while (it.hasNext()) {
+                UUID entityId = it.next();
+                Entity e = Bukkit.getEntity(entityId);
+                if (e == null) {
+                    it.remove();
+                    continue;
+                }
+                if (!MythicBukkit.inst().getMobManager().isMythicMob(e)) {
+                    it.remove();
+                }
+            }
+        }, 20L * 60, 20L * 60).getTaskId();
+    }
+
+    /**
+     * Force-track a specific entity UUID so BossDamageList accumulates damage for it
+     * even if the mob ID is not listed in BossDamageList.Bosses config.
+     * Called by BossSpawner when LinkBossDamageList is true.
+     */
+    public void forceTrack(UUID entityUUID) {
+        forceTrackedBosses.add(entityUUID);
+        damageMap.putIfAbsent(entityUUID, new ConcurrentHashMap<>());
+    }
+
+    /** Call this from your plugin onDisable if you want it extra safe. */
+    public void shutdown() {
+        if (cleanupTaskId != -1) Bukkit.getScheduler().cancelTask(cleanupTaskId);
+        damageMap.clear();
+        forceTrackedBosses.clear();
     }
 
     @EventHandler
     public void onSpawn(MythicMobSpawnEvent event) {
-        HashMap<Player, Double> damageMap = new HashMap<>();
-        if (!bossIds.contains(event.getMob().getType().getInternalName())) {
-            return;
-        }
-        this.damageMap.put(event.getEntity().getUniqueId(), damageMap);
+        String mobId = event.getMob().getType().getInternalName();
+        if (!bossIds.contains(mobId)) return;
+
+        // Pre-create map (not required anymore, but fine)
+        damageMap.putIfAbsent(event.getEntity().getUniqueId(), new ConcurrentHashMap<>());
     }
 
-    @EventHandler(priority = EventPriority.HIGHEST)
-    public void onDamage(PlayerAttackEvent event) {
-        if (event.isCancelled()) return;
-        if (event.getEntity().getNoDamageTicks() != 0) return;
-        if (event.getEntity().isInvulnerable()) return;
-        Player player = event.getAttacker().getPlayer();
-        Entity target = event.getEntity();
-        if (this.damageMap.containsKey(target.getUniqueId())) {
-            HashMap<Player, Double> damageMap = this.damageMap.get(target.getUniqueId());
-            if (damageMap.containsKey(player)) {
-                double damage = damageMap.get(player);
-                damage += event.getDamage().getDamage();
-                damageMap.put(player, damage);
-            } else {
-                damageMap.put(player, event.getDamage().getDamage());
-            }
+    @EventHandler
+    public void onDamage(PlayerDamageCalculatedEvent event) {
+        // If this event can fire async, hop to main thread before touching Bukkit + maps
+        if (!Bukkit.isPrimaryThread()) {
+            Bukkit.getScheduler().runTask(plugin, () -> onDamage(event));
+            return;
         }
+
+        Entity target = event.getVictim();
+
+        if (!MythicBukkit.inst().getMobManager().isMythicMob(target)) return;
+
+        ActiveMob activeMob = MythicBukkit.inst().getMobManager().getActiveMob(target.getUniqueId()).orElse(null);
+        if (activeMob == null) return;
+
+        String bossId = activeMob.getType().getInternalName();
+        UUID bossEntityId = target.getUniqueId();
+        if (!bossIds.contains(bossId) && !forceTrackedBosses.contains(bossEntityId)) return;
+
+        Player attacker = event.getAttacker();
+
+        DamageData damageData = event.getDamageData();
+
+        double damage = damageData.getMetaDamage();
+        if (damage <= 0) return;
+
+        UUID playerId = attacker.getUniqueId();
+
+        // Lazy init (fixes “boss existed before plugin enabled / spawn missed”)
+        Map<UUID, Double> bossDamages = damageMap.computeIfAbsent(bossEntityId, k -> new ConcurrentHashMap<>());
+
+        // accumulate
+        bossDamages.merge(playerId, damage, Double::sum);
     }
 
     @EventHandler
     public void onDeath(MythicMobDeathEvent event) {
-        if (this.damageMap.containsKey(event.getEntity().getUniqueId())) {
-            HashMap<Player, Double> damageMap = this.damageMap.get(event.getEntity().getUniqueId());
+        UUID bossEntityId = event.getEntity().getUniqueId();
+        forceTrackedBosses.remove(bossEntityId);
+        Map<UUID, Double> bossDamages = damageMap.remove(bossEntityId);
+        if (bossDamages == null || bossDamages.isEmpty()) return;
 
-            // Sort entries by descending damage
-            List<Map.Entry<Player, Double>> sortedEntries = new ArrayList<>(damageMap.entrySet());
-            sortedEntries.sort((a, b) -> Double.compare(b.getValue(), a.getValue()));
+        String bossId = event.getMob().getType().getInternalName();
 
-            @NotNull
-            Collection<Player> players = event.getEntity().getWorld().getNearbyPlayers(event.getEntity().getLocation(), 100);
+        // Sort by descending damage
+        List<Map.Entry<UUID, Double>> sorted = new ArrayList<>(bossDamages.entrySet());
+        sorted.sort((a, b) -> Double.compare(b.getValue(), a.getValue()));
 
-            Component killmsg = MiniMessage.miniMessage().deserialize(killMessage, Placeholder.component("name", MiniMessage.miniMessage().deserialize(ColorTranslator.toMiniMessageFormat(event.getEntity().getName()))));
-            List<Component> boards = new ArrayList<>();
+        // Broadcast to nearby players (intended)
+        Collection<Player> nearby = event.getEntity().getWorld().getNearbyPlayers(event.getEntity().getLocation(), 100);
 
-            String bossId = event.getMob().getType().getInternalName();
+        Component killmsg = MiniMessage.miniMessage().deserialize(
+                killMessage,
+                Placeholder.component(
+                        "name",
+                        MiniMessage.miniMessage().deserialize(ColorTranslator.toMiniMessageFormat(event.getEntity().getName()))
+                )
+        );
 
-            for (int i = 1 ; i <= sortedEntries.size(); i++) {
-                Map.Entry<Player, Double> entry = sortedEntries.get(i-1);
-                boards.add(MiniMessage.miniMessage().deserialize(
-                        leaderBoardMessage,
-                        Placeholder.unparsed("name", ColorTranslator.toMiniMessageFormat(entry.getKey().getName())),
-                        Placeholder.unparsed("damage", String.format("%.2f", entry.getValue())),
-                        Placeholder.unparsed("place", String.valueOf(i))
-                ));
+        List<Component> boards = new ArrayList<>();
 
-                if (damageThreshold.get(bossId) != null && entry.getValue() < damageThreshold.get(bossId)) {
-                    continue;
-                }
+        double threshold = damageThreshold.getOrDefault(bossId, 0.0);
+        Map<Integer, List<String>> bossRewardMap = rewards.getOrDefault(bossId, Map.of());
+        List<String> bossDefaultRewards = defaultRewards.getOrDefault(bossId, List.of());
 
-                if (rewards.get(event.getMob().getType().getInternalName()) != null) {
-                    if (rewards.get(event.getMob().getType().getInternalName()).containsKey(i)) {
-                        for (String reward : rewards.get(event.getMob().getType().getInternalName()).get(i)) {
-                            plugin.getServer().dispatchCommand(plugin.getServer().getConsoleSender(), reward.replace("<player>", entry.getKey().getName()));
-                        }
-                    }
-                }
+        for (int i = 1; i <= sorted.size(); i++) {
+            UUID playerId = sorted.get(i - 1).getKey();
+            double dmg = sorted.get(i - 1).getValue();
 
-                for (String reward : defaultRewards.get(event.getMob().getType().getInternalName())) {
-                    plugin.getServer().dispatchCommand(plugin.getServer().getConsoleSender(), reward.replace("<player>", entry.getKey().getName()));
+            // Name for leaderboard (prefer online name, fallback to offline name or UUID)
+            Player online = Bukkit.getPlayer(playerId);
+            String name = (online != null) ? online.getName() : Optional.ofNullable(Bukkit.getOfflinePlayer(playerId).getName()).orElse(playerId.toString());
+
+            boards.add(MiniMessage.miniMessage().deserialize(
+                    leaderBoardMessage,
+                    Placeholder.unparsed("name", ColorTranslator.toMiniMessageFormat(name)),
+                    Placeholder.unparsed("damage", String.format(Locale.US, "%.2f", dmg)),
+                    Placeholder.unparsed("place", String.valueOf(i))
+            ));
+
+            // Threshold: skip all rewards if below (same behavior as your original)
+            if (dmg < threshold) continue;
+
+            // Place rewards
+            List<String> placeCmds = bossRewardMap.get(i);
+            if (placeCmds != null) {
+                for (String cmd : placeCmds) {
+                    plugin.getServer().dispatchCommand(plugin.getServer().getConsoleSender(), cmd.replace("<player>", name));
                 }
             }
 
-            for (Player player : players) {
-                player.sendMessage(killmsg);
-                for (Component board : boards) {
-                    player.sendMessage(board);
-                }
+            // Default rewards
+            for (String cmd : bossDefaultRewards) {
+                plugin.getServer().dispatchCommand(plugin.getServer().getConsoleSender(), cmd.replace("<player>", name));
             }
+        }
 
-            this.damageMap.remove(event.getEntity().getUniqueId());
-
+        for (Player p : nearby) {
+            p.sendMessage(killmsg);
+            for (Component board : boards) {
+                p.sendMessage(board);
+            }
         }
     }
 
     @EventHandler
     public void onMythicMobDespawn(MythicMobDespawnEvent event) {
-        this.damageMap.remove(event.getEntity().getUniqueId());
+        UUID id = event.getEntity().getUniqueId();
+        damageMap.remove(id);
+        forceTrackedBosses.remove(id);
     }
-
 }

@@ -4,12 +4,17 @@ import com.teenkung.devmmo.DevMMO;
 import com.teenkung.devmmo.Utils.RegionLevelUtils.LevelWeight;
 import com.teenkung.devmmo.Utils.RegionLevelUtils.RegionLevelRecord;
 import com.teenkung.devmmo.Utils.WorldGuardUtils;
+import io.lumine.mythic.bukkit.MythicBukkit;
 import io.lumine.mythic.bukkit.events.MythicMobSpawnEvent;
+import org.bukkit.Bukkit;
 import org.bukkit.Location;
 import org.bukkit.configuration.ConfigurationSection;
 import org.bukkit.entity.Silverfish;
 import org.bukkit.event.EventHandler;
+import org.bukkit.event.EventPriority;
 import org.bukkit.event.Listener;
+import org.bukkit.event.player.PlayerCommandPreprocessEvent;
+import org.bukkit.event.server.ServerCommandEvent;
 
 import java.util.*;
 import java.util.concurrent.ThreadLocalRandom;
@@ -19,6 +24,10 @@ public class RegionLevelModule implements Listener {
     private final DevMMO plugin;
     private final Map<String, RegionLevelRecord> regionLevelRecords = new HashMap<>();
     private final Map<String, String> mobNameFormats = new HashMap<>();
+    private final Set<String> blacklistedWorlds = new HashSet<>();
+
+    // True only during synchronous processing of a /smm command on the main thread
+    private boolean isSmmSpawning = false;
 
     public RegionLevelModule(DevMMO plugin) {
         this.plugin = plugin;
@@ -28,9 +37,38 @@ public class RegionLevelModule implements Listener {
         }
     }
 
+    @EventHandler(priority = EventPriority.MONITOR, ignoreCancelled = true)
+    public void onPlayerCommand(PlayerCommandPreprocessEvent event) {
+        String msg = event.getMessage().trim().toLowerCase();
+        if (msg.startsWith("/smm ") || msg.equals("/smm")) {
+            isSmmSpawning = true;
+            Bukkit.getScheduler().runTask(plugin, () -> isSmmSpawning = false);
+        }
+    }
+
+    @EventHandler(priority = EventPriority.MONITOR)
+    public void onServerCommand(ServerCommandEvent event) {
+        String cmd = event.getCommand().trim().toLowerCase();
+        if (cmd.startsWith("smm ") || cmd.equals("smm")) {
+            isSmmSpawning = true;
+            Bukkit.getScheduler().runTask(plugin, () -> isSmmSpawning = false);
+        }
+    }
+
     @EventHandler
     public void onSpawn(MythicMobSpawnEvent event) {
+        if (isSmmSpawning) return;
+
         Location location = event.getLocation();
+        if (location == null || location.getWorld() == null) {
+            return;
+        }
+
+        String worldName = location.getWorld().getName();
+        if (worldName != null && blacklistedWorlds.contains(worldName.toLowerCase(Locale.ROOT))) {
+            return;
+        }
+
         // Grab the mobType from the event
         String mobType = getMythicMobType(event.getEntity());
         if (mobType == null) {
@@ -57,9 +95,29 @@ public class RegionLevelModule implements Listener {
                         break;
                     }
                     int levelInt = (int) event.getMobLevel();
-                    String template = mobNameFormats.getOrDefault(mobType.toLowerCase(), mobNameFormats.getOrDefault("default", "&aLv.&e<level> &r&f<name>"));
-                    String name = template.replace("<level>", String.valueOf(levelInt)).replace("<name>", event.getMob().getDisplayName());
-                    event.getMob().setDisplayName(name);
+                    event.getMob().setLevel(levelInt);
+                    String rawName;
+
+                    if (event.getMob().getType().getDisplayName() != null) {
+                        rawName = event.getMob().getType().getDisplayName().get(event.getMob());
+                    } else {
+                        rawName = event.getMob().getType().getInternalName();
+                    }
+
+                    if (rawName == null || rawName.isBlank()) {
+                        rawName = event.getMob().getEntity().getBukkitEntity().getName();
+                    }
+
+                    String template = mobNameFormats.getOrDefault(
+                            mobType.toLowerCase(),
+                            mobNameFormats.getOrDefault("default", "&aLv.&e<level> &r&f<name>")
+                    );
+
+                    String finalName = template
+                            .replace("<level>", String.valueOf(levelInt))
+                            .replace("<name>", rawName);
+
+                    event.getMob().setDisplayName(finalName);
                 }
                 break;
             }
@@ -96,6 +154,8 @@ public class RegionLevelModule implements Listener {
             plugin.getLogger().info("Debug Mode enabled for RegionLevelModule!");
         }
 
+        regionLevelRecords.clear();
+
         mobNameFormats.clear();
         Object nameObj = config.get("MobName");
         if (nameObj instanceof ConfigurationSection section) {
@@ -108,6 +168,27 @@ public class RegionLevelModule implements Listener {
         } else {
             String def = config.getString("MobName", "&aLv.&e<level> &r&f<name>");
             mobNameFormats.put("default", def);
+        }
+
+        blacklistedWorlds.clear();
+        for (String world : config.getStringList("WorldBlacklist")) {
+            if (world != null) {
+                String normalized = world.trim();
+                if (!normalized.isEmpty()) {
+                    blacklistedWorlds.add(normalized.toLowerCase(Locale.ROOT));
+                }
+            }
+        }
+        ConfigurationSection worldSection = config.getConfigurationSection("Worlds");
+        if (worldSection != null) {
+            for (String name : worldSection.getStringList("Blacklist")) {
+                if (name != null) {
+                    String normalized = name.trim();
+                    if (!normalized.isEmpty()) {
+                        blacklistedWorlds.add(normalized.toLowerCase(Locale.ROOT));
+                    }
+                }
+            }
         }
 
         ConfigurationSection regions = config.getConfigurationSection("Regions");

@@ -4,7 +4,12 @@ MobXPModule:
     default: "30 + (0.4 * ({level} ^ 2.25))"
     world: "30 + (0.4 * ({level} ^ 2.25))"
 
+  # World blacklist - worlds where no EXP is awarded at all
   Blacklist: []
+
+  # Mob ID blacklist - MythicMobs internal names that will never give EXP
+  MobBlacklist:
+    - ExampleMythicMob
 
   # Title display configuration (time in milliseconds)
   TitleFadeIn: 150

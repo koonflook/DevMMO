@@ -1,5 +1,6 @@
 package com.teenkung.devmmo;
 
+import com.teenkung.devmmo.Commands.BossReminder.BossReminderCommand;
 import com.teenkung.devmmo.Commands.MainCommand.MainCommand;
 import com.teenkung.devmmo.Commands.SpawnMythicMobs.SpawnMythicMobs;
 import com.teenkung.devmmo.Commands.SpawnMythicMobs.SpawnMythicMobsTab;
@@ -27,7 +28,9 @@ public class DevMMO extends JavaPlugin {
     private EXPShareModule expShareModule;
     private RegionLevelModule regionLevelModule;
     private BossDamageList bossDamageList;
-    private AuraSkillIntegration auraSkillIntegration;
+    private MobStatScaler mobStatScaler;
+    private BossSpawner bossSpawner;
+    //private AuraSkillIntegration auraSkillIntegration;
 
     @Override
     public void onEnable() {
@@ -37,6 +40,7 @@ public class DevMMO extends JavaPlugin {
         Objects.requireNonNull(getCommand("spawn-mythicmobs")).setExecutor(new SpawnMythicMobs());
         Objects.requireNonNull(getCommand("spawn-mythicmobs")).setTabCompleter(new SpawnMythicMobsTab());
         new MainCommand(this);
+        new BossReminderCommand(this);
     }
 
     @Override
@@ -60,7 +64,9 @@ public class DevMMO extends JavaPlugin {
         this.expShareModule = new EXPShareModule(this);
         this.regionLevelModule = new RegionLevelModule(this);
         this.bossDamageList = new BossDamageList(this);
-        this.auraSkillIntegration = new AuraSkillIntegration(this);
+        this.mobStatScaler = new MobStatScaler(this);
+        this.bossSpawner = new BossSpawner(this);
+        //this.auraSkillIntegration = new AuraSkillIntegration(this);
 
         developcraft.loadAll();
 
@@ -74,7 +80,8 @@ public class DevMMO extends JavaPlugin {
     public void unloadAll() {
         developcraft.unloadAll();
         staminaModule.shutdown();
-        auraSkillIntegration.shutdown();
+        //auraSkillIntegration.shutdown();
+        bossDamageList.shutdown();
         HandlerList.unregisterAll(healthModule);
         HandlerList.unregisterAll(staminaModule);
         HandlerList.unregisterAll(fireworkBlocker);
@@ -83,7 +90,9 @@ public class DevMMO extends JavaPlugin {
         HandlerList.unregisterAll(expShareModule);
         HandlerList.unregisterAll(regionLevelModule);
         HandlerList.unregisterAll(bossDamageList);
-        HandlerList.unregisterAll(auraSkillIntegration);
+        HandlerList.unregisterAll(mobStatScaler);
+        bossSpawner.shutdown();
+        //HandlerList.unregisterAll(auraSkillIntegration);
         HandlerList.unregisterAll(this);
     }
 
@@ -135,6 +144,10 @@ public class DevMMO extends JavaPlugin {
 
     public BossDamageList getBossDamageList() { return bossDamageList; }
 
-    public AuraSkillIntegration getAuraSkillIntegration() { return auraSkillIntegration; }
+    public MobStatScaler getMobStatScaler() { return mobStatScaler; }
+
+    public BossSpawner getBossSpawner() { return bossSpawner; }
+
+    //public AuraSkillIntegration getAuraSkillIntegration() { return auraSkillIntegration; }
 
 }

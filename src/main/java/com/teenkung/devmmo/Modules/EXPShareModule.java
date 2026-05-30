@@ -50,6 +50,7 @@ public class EXPShareModule implements Listener {
     public void onDeath(MythicMobDeathEvent event) {
         PlayerDamage damageRecord = damageTracker.getDamages().get(event.getMob().getUniqueId());
         if (damageRecord == null) return;
+        if (mobXPModule.isMobBlacklisted(event.getMob().getType().getInternalName())) return;
         if (debugMode) {
             damageRecord.getDamagers().forEach(uuid -> {
                 Player player = Bukkit.getPlayer(uuid);

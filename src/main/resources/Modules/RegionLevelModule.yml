@@ -1,5 +1,7 @@
 RegionLevel:
   DebugMode: false
+  WorldBlacklist:
+    - example_world_nether
   MobName:
     default: "&aLv.&e<level> &r&f<name>"
     demonking: "&cLv.&4<level> &r&l<name>"

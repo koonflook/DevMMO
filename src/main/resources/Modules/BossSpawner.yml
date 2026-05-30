@@ -1,0 +1,41 @@
+BossSpawner:
+  # MythicMobs boss IDs to randomly pick from each spawn cycle.
+  # Format:
+  #   MyBossId:
+  #     Level: 5
+  Bosses: {}
+
+  # Spawn locations (format: x:y:z:world). One is chosen at random each cycle.
+  Locations: []
+
+  # Broadcast messages sent to all players when a boss spawns (MiniMessage format).
+  # Placeholders: <name> (boss display name from MythicMobs config), <location> (coordinates)
+  SpawnBroadcast: []
+
+  # Console commands run when the boss spawns.
+  # Placeholders: <name> (boss display name), <location> (coordinates)
+  SpawnCommands: []
+
+  # Re-broadcast SpawnBroadcast and run SpawnCommands every N minutes while a boss
+  # is pending (announced but not yet spawned). 0 = disabled.
+  ReminderInterval: 0
+
+  # Stop the reminder after N minutes total (0 = never stop automatically).
+  ReminderTimeout: 31
+
+  # Radius (in blocks) within which at least one player must be present before
+  # the boss will actually spawn. Also used to determine if a pending spawn can proceed.
+  NearbyPlayerRadius: 64.0
+
+  # If true, the spawned boss entity will be force-tracked by BossDamageList
+  # even if its mob ID is not listed in BossDamageList.Bosses config.
+  LinkBossDamageList: false
+
+  # Spawn mode — choose ONE option:
+
+  # Option 1: Spawn every N seconds (0 = disabled).
+  Interval: 0
+
+  # Option 2: Spawn at specific real-world server times (HH:mm, 24-hour).
+  # When SpecificTimes has entries, Interval is ignored.
+  SpecificTimes: []

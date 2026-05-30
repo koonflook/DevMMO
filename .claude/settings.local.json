@@ -1,0 +1,13 @@
+{
+  "permissions": {
+    "allow": [
+      "Bash(jar tf:*)",
+      "Bash(\"/c/Program Files/Java/jdk-21/bin/jar\" tf \"/c/Users/nathaphon/.gradle/caches/modules-2/files-2.1/io.lumine/Mythic-Dist/5.11.1/f1cbee74a5e8ccc7f0cfaf20824a4970e4fe95d9/Mythic-Dist-5.11.1.jar\")",
+      "Bash(\"/c/Program Files/Java/jdk-21/bin/javap\" -cp \"/c/Users/nathaphon/.gradle/caches/modules-2/files-2.1/io.lumine/Mythic-Dist/5.11.1/f1cbee74a5e8ccc7f0cfaf20824a4970e4fe95d9/Mythic-Dist-5.11.1.jar\" io.lumine.mythic.api.mobs.entities.SpawnReason 2>/dev/null)",
+      "Bash(\"/c/Program Files/Java/jdk-21/bin/javap\" -cp \"/c/Users/nathaphon/.gradle/caches/modules-2/files-2.1/io.lumine/Mythic-Dist/5.11.1/f1cbee74a5e8ccc7f0cfaf20824a4970e4fe95d9/Mythic-Dist-5.11.1.jar\" io.lumine.mythic.bukkit.events.MythicMobSpawnEvent 2>/dev/null)",
+      "Bash(\"/c/Program Files/Java/jdk-21/bin/javap\" -cp \"/c/Users/nathaphon/.gradle/caches/modules-2/files-2.1/io.lumine/Mythic-Dist/5.11.1/f1cbee74a5e8ccc7f0cfaf20824a4970e4fe95d9/Mythic-Dist-5.11.1.jar\" io.lumine.mythic.bukkit.commands.mobs.SpawnCommand 2>/dev/null)",
+      "Bash('/c/Program Files/Java/jdk-21/bin/javap' -cp /c/Users/nathaphon/.gradle/caches/modules-2/files-2.1/io.lumine/Mythic-Dist/5.11.1/f1cbee74a5e8ccc7f0cfaf20824a4970e4fe95d9/Mythic-Dist-5.11.1.jar io.lumine.mythic.core.mobs.ActiveMob)",
+      "Bash('/c/Program Files/Java/jdk-21/bin/javap' -cp /c/Users/nathaphon/.gradle/caches/modules-2/files-2.1/io.lumine/Mythic-Dist/5.11.1/f1cbee74a5e8ccc7f0cfaf20824a4970e4fe95d9/Mythic-Dist-5.11.1.jar io.lumine.mythic.api.mobs.MythicMob)"
+    ]
+  }
+}

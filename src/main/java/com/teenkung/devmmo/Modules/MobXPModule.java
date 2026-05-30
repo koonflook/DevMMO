@@ -22,6 +22,7 @@ import org.bukkit.event.Listener;
 
 import java.text.DecimalFormat;
 import java.time.Duration;
+import java.util.Locale;
 import java.util.Map;
 import java.util.Set;
 import java.util.concurrent.ConcurrentHashMap;
@@ -50,6 +51,7 @@ public class MobXPModule implements Listener {
     private final Map<String, String> formulas = new ConcurrentHashMap<>();
     private final Map<String, Map<Integer, Double>> worldCache = new ConcurrentHashMap<>();
     private final java.util.Set<String> blacklist = ConcurrentHashMap.newKeySet();
+    private final java.util.Set<String> mobBlacklist = ConcurrentHashMap.newKeySet();
     private boolean debugMode;
 
     /* ------------------------------------------- */
@@ -80,7 +82,8 @@ public class MobXPModule implements Listener {
         }
         baseFormula  = formulas.getOrDefault("default", "30 + (0.4 * (level ^ 2.25))");
 
-        cfg.getStringList("MobXPModule.Blacklist").forEach(w -> blacklist.add(w.toLowerCase()));
+        cfg.getStringList("MobXPModule.Blacklist").forEach(w -> blacklist.add(normalizeKey(w)));
+        cfg.getStringList("MobXPModule.MobBlacklist").forEach(id -> mobBlacklist.add(normalizeKey(id)));
 
         if (plugin.getConfigLoader().isModuleEnabled("MobXPModule"))
             plugin.getServer().getPluginManager().registerEvents(this, plugin);
@@ -109,8 +112,10 @@ public class MobXPModule implements Listener {
     public void onMythicMobDeath(MythicMobDeathEvent event) {
         if (!plugin.getConfigLoader().isModuleEnabled("MobXPModule")) return;
         if (plugin.getConfigLoader().isModuleEnabled("EXPShareModule")) return;
-
         ActiveMob mob = event.getMob();
+
+        if (isMobBlacklisted(mob.getType().getInternalName())) return;
+
         double rawLevel = mob.getLevel();
 
         /* Guard against missing / NaN / negative levels. */
@@ -177,10 +182,22 @@ public class MobXPModule implements Listener {
 
     /** XP gain using world specific formula */
     public double getExperienceGain(int level, String world) {
-        if (blacklist.contains(world.toLowerCase())) return 0;
+        if (isWorldBlacklisted(world)) return 0;
 
-        String formula = formulas.getOrDefault(world.toLowerCase(), baseFormula);
+        String formula = formulas.getOrDefault(normalizeKey(world), baseFormula);
         return calculateExpression(formula, world, level);
+    }
+
+    public boolean isWorldBlacklisted(String world) {
+        return blacklist.contains(normalizeKey(world));
+    }
+
+    public boolean isMobBlacklisted(String mobId) {
+        return mobBlacklist.contains(normalizeKey(mobId));
+    }
+
+    private String normalizeKey(String value) {
+        return value == null ? "" : value.trim().toLowerCase(Locale.ROOT);
     }
 
     private double calculateExpression(String formula, String world, int level) {
