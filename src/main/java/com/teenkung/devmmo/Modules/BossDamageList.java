@@ -22,6 +22,7 @@ import org.bukkit.event.Listener;
 
 import java.util.*;
 import java.util.concurrent.ConcurrentHashMap;
+import java.util.concurrent.ThreadLocalRandom;
 
 public class BossDamageList implements Listener {
 
@@ -43,10 +44,21 @@ public class BossDamageList implements Listener {
     // bossId -> minimum damage
     private final Map<String, Double> damageThreshold = new HashMap<>();
 
+    // bossId -> random reward entries
+    private final Map<String, List<RandomRewardEntry>> randomRewards = new HashMap<>();
+
+    // bossId -> whether players below threshold still receive random rewards
+    private final Map<String, Boolean> randomRewardsBelowThreshold = new HashMap<>();
+
     private String killMessage;
     private String leaderBoardMessage;
 
     private int cleanupTaskId = -1;
+
+    /**
+     * Represents a single random reward entry with a chance and list of commands.
+     */
+    private record RandomRewardEntry(double chance, List<String> commands) {}
 
     public BossDamageList(DevMMO plugin) {
         this.plugin = plugin;
@@ -58,7 +70,7 @@ public class BossDamageList implements Listener {
 
         loadConfigSafe();
 
-        // Cleanup stale entries periodically (fixes “boss vanished without despawn/death” cases)
+        // Cleanup stale entries periodically (fixes "boss vanished without despawn/death" cases)
         startCleanupTask();
 
         plugin.getLogger().info("[BossDamageList] Enabled module.");
@@ -106,6 +118,49 @@ public class BossDamageList implements Listener {
             defaultRewards.put(bossId, def != null ? def : List.of());
 
             damageThreshold.put(bossId, bossCfg.getDouble("MinimumDamageThreshold", 0.0));
+
+            // Random rewards
+            List<RandomRewardEntry> randomEntries = new ArrayList<>();
+            List<?> randomList = bossCfg.getList("RandomRewards");
+            if (randomList != null) {
+                for (Object obj : randomList) {
+                    if (!(obj instanceof Map<?, ?> entryMap)) continue;
+
+                    Object chanceObj = entryMap.get("chance");
+                    Object cmdsObj  = entryMap.get("commands");
+
+                    if (chanceObj == null || cmdsObj == null) {
+                        plugin.getLogger().warning("[BossDamageList] RandomRewards entry missing 'chance' or 'commands' in boss " + bossId);
+                        continue;
+                    }
+
+                    double chance;
+                    try {
+                        chance = Double.parseDouble(chanceObj.toString());
+                    } catch (NumberFormatException e) {
+                        plugin.getLogger().warning("[BossDamageList] Invalid chance value '" + chanceObj + "' in boss " + bossId);
+                        continue;
+                    }
+
+                    if (chance <= 0 || chance > 100) {
+                        plugin.getLogger().warning("[BossDamageList] Chance must be between 0 and 100, got " + chance + " in boss " + bossId);
+                        continue;
+                    }
+
+                    List<String> cmds = new ArrayList<>();
+                    if (cmdsObj instanceof List<?> cmdList) {
+                        for (Object c : cmdList) {
+                            if (c != null) cmds.add(c.toString());
+                        }
+                    }
+
+                    randomEntries.add(new RandomRewardEntry(chance, cmds));
+                }
+            }
+            randomRewards.put(bossId, randomEntries);
+
+            // Whether players below threshold still get random rewards
+            randomRewardsBelowThreshold.put(bossId, bossCfg.getBoolean("RandomRewardsBelowThreshold", false));
         }
     }
 
@@ -182,7 +237,7 @@ public class BossDamageList implements Listener {
 
         UUID playerId = attacker.getUniqueId();
 
-        // Lazy init (fixes “boss existed before plugin enabled / spawn missed”)
+        // Lazy init (fixes "boss existed before plugin enabled / spawn missed")
         Map<UUID, Double> bossDamages = damageMap.computeIfAbsent(bossEntityId, k -> new ConcurrentHashMap<>());
 
         // accumulate
@@ -218,6 +273,8 @@ public class BossDamageList implements Listener {
         double threshold = damageThreshold.getOrDefault(bossId, 0.0);
         Map<Integer, List<String>> bossRewardMap = rewards.getOrDefault(bossId, Map.of());
         List<String> bossDefaultRewards = defaultRewards.getOrDefault(bossId, List.of());
+        List<RandomRewardEntry> bossRandomRewards = randomRewards.getOrDefault(bossId, List.of());
+        boolean allowBelowThreshold = randomRewardsBelowThreshold.getOrDefault(bossId, false);
 
         for (int i = 1; i <= sorted.size(); i++) {
             UUID playerId = sorted.get(i - 1).getKey();
@@ -234,20 +291,27 @@ public class BossDamageList implements Listener {
                     Placeholder.unparsed("place", String.valueOf(i))
             ));
 
-            // Threshold: skip all rewards if below (same behavior as your original)
-            if (dmg < threshold) continue;
+            boolean aboveThreshold = dmg >= threshold;
 
-            // Place rewards
-            List<String> placeCmds = bossRewardMap.get(i);
-            if (placeCmds != null) {
-                for (String cmd : placeCmds) {
+            // Place rewards + Default rewards (threshold required)
+            if (aboveThreshold) {
+                // Place rewards
+                List<String> placeCmds = bossRewardMap.get(i);
+                if (placeCmds != null) {
+                    for (String cmd : placeCmds) {
+                        plugin.getServer().dispatchCommand(plugin.getServer().getConsoleSender(), cmd.replace("<player>", name));
+                    }
+                }
+
+                // Default rewards
+                for (String cmd : bossDefaultRewards) {
                     plugin.getServer().dispatchCommand(plugin.getServer().getConsoleSender(), cmd.replace("<player>", name));
                 }
             }
 
-            // Default rewards
-            for (String cmd : bossDefaultRewards) {
-                plugin.getServer().dispatchCommand(plugin.getServer().getConsoleSender(), cmd.replace("<player>", name));
+            // Random rewards — give if above threshold, or if below threshold is allowed
+            if (aboveThreshold || allowBelowThreshold) {
+                giveRandomRewards(bossRandomRewards, name);
             }
         }
 
@@ -255,6 +319,28 @@ public class BossDamageList implements Listener {
             p.sendMessage(killmsg);
             for (Component board : boards) {
                 p.sendMessage(board);
+            }
+        }
+    }
+
+    /**
+     * Rolls each RandomRewardEntry independently and dispatches commands if the roll succeeds.
+     *
+     * @param entries List of random reward entries for this boss.
+     * @param playerName The player's name to substitute into commands.
+     */
+    private void giveRandomRewards(List<RandomRewardEntry> entries, String playerName) {
+        if (entries.isEmpty()) return;
+        Random random = ThreadLocalRandom.current();
+        for (RandomRewardEntry entry : entries) {
+            double roll = random.nextDouble() * 100.0;
+            if (roll < entry.chance()) {
+                for (String cmd : entry.commands()) {
+                    plugin.getServer().dispatchCommand(
+                            plugin.getServer().getConsoleSender(),
+                            cmd.replace("<player>", playerName)
+                    );
+                }
             }
         }
     }
