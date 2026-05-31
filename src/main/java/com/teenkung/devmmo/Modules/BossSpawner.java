@@ -32,6 +32,8 @@ public class BossSpawner {
 
     private record BossEntry(String id, int level) {}
     private record ChunkRef(UUID worldId, int x, int z) {}
+    /** A SpecificTimes entry that may optionally pin a specific boss ID. */
+    private record SpecificTimeEntry(LocalTime time, String bossId) {}
 
     /* ---------- runtime state ---------- */
 
@@ -63,7 +65,7 @@ public class BossSpawner {
     private List<String>    spawnCommands  = new ArrayList<>();
     private boolean         linkBossDamageList = false;
     private long            intervalTicks  = 0;
-    private List<LocalTime> specificTimes  = new ArrayList<>();
+    private List<SpecificTimeEntry> specificTimeEntries = new ArrayList<>();
     private double          nearbyPlayerRadius  = 64.0;
     private long            reminderIntervalTicks = 0;
     private long            reminderTimeoutTicks  = 0;
@@ -128,12 +130,33 @@ public class BossSpawner {
         long reminderTimeoutMinutes = sec.getLong("ReminderTimeout", 0);
         reminderTimeoutTicks = reminderTimeoutMinutes * 60L * 20L;
 
-        specificTimes = new ArrayList<>();
-        for (String timeStr : sec.getStringList("SpecificTimes")) {
-            try {
-                specificTimes.add(LocalTime.parse(timeStr));
-            } catch (Exception e) {
-                plugin.getLogger().warning("[BossSpawner] Invalid time format: " + timeStr + " (expected HH:mm)");
+        specificTimeEntries = new ArrayList<>();
+        List<?> timesList = sec.getList("SpecificTimes");
+        if (timesList != null) {
+            for (Object obj : timesList) {
+                if (obj instanceof String timeStr) {
+                    // Legacy format: "HH:mm"
+                    try {
+                        specificTimeEntries.add(new SpecificTimeEntry(LocalTime.parse(timeStr.trim()), null));
+                    } catch (Exception e) {
+                        plugin.getLogger().warning("[BossSpawner] Invalid time format: " + timeStr + " (expected HH:mm)");
+                    }
+                } else if (obj instanceof java.util.Map<?, ?> map) {
+                    // New format: {time: "HH:mm", boss: "boss_id"}
+                    Object timeObj = map.get("time");
+                    Object bossObj = map.get("boss");
+                    if (timeObj == null) {
+                        plugin.getLogger().warning("[BossSpawner] SpecificTimes entry missing 'time' field.");
+                        continue;
+                    }
+                    try {
+                        LocalTime t = LocalTime.parse(timeObj.toString().trim());
+                        String pinnedBoss = (bossObj != null) ? bossObj.toString() : null;
+                        specificTimeEntries.add(new SpecificTimeEntry(t, pinnedBoss));
+                    } catch (Exception e) {
+                        plugin.getLogger().warning("[BossSpawner] Invalid time format: " + timeObj + " (expected HH:mm)");
+                    }
+                }
             }
         }
 
@@ -154,8 +177,8 @@ public class BossSpawner {
 
         startActiveChunkFollowTask();
 
-        if (!specificTimes.isEmpty()) {
-            for (LocalTime time : specificTimes) scheduleAtTime(time);
+        if (!specificTimeEntries.isEmpty()) {
+            for (SpecificTimeEntry entry : specificTimeEntries) scheduleAtTime(entry);
         } else if (intervalTicks > 0) {
             BukkitTask task = Bukkit.getScheduler()
                     .runTaskTimer(plugin, () -> this.spawnBoss(null, false), intervalTicks, intervalTicks);
@@ -165,17 +188,17 @@ public class BossSpawner {
         }
     }
 
-    private void scheduleAtTime(LocalTime target) {
+    private void scheduleAtTime(SpecificTimeEntry entry) {
         LocalTime now = LocalTime.now();
-        long secondsUntil = now.until(target, ChronoUnit.SECONDS);
+        long secondsUntil = now.until(entry.time(), ChronoUnit.SECONDS);
         if (secondsUntil <= 0) secondsUntil += 86400L;
         long ticksUntil = secondsUntil * 20L;
 
         int[] taskRef = {-1};
         taskRef[0] = Bukkit.getScheduler().runTaskLater(plugin, () -> {
             scheduledTaskIds.remove((Integer) taskRef[0]);
-            spawnBoss(null, false);
-            scheduleAtTime(target);
+            spawnBoss(entry.bossId(), false);
+            scheduleAtTime(entry);
         }, ticksUntil).getTaskId();
         scheduledTaskIds.add(taskRef[0]);
     }
